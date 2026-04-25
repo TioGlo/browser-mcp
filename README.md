@@ -21,13 +21,51 @@ browser-mcp solves these with:
 
 ## Prerequisites
 
-- **Chrome** running with remote debugging enabled:
-  ```bash
-  google-chrome --remote-debugging-port=9222 \
-    --user-data-dir="$HOME/.chrome-mcp-profile" \
-    --no-first-run --no-default-browser-check
-  ```
 - **Node.js** 18+
+- **Chrome / Chromium** installed (binary auto-detected, or set `CHROME_BIN`)
+
+Chrome can be running already, or browser-mcp can launch it for you (see `CHROME_AUTOLAUNCH` below).
+
+## Configuration (env vars)
+
+All optional. Set them in the `env` block of your `.mcp.json` entry.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `CDP_URL` | `http://localhost:$CHROME_PORT` | Full URL to an existing CDP endpoint. Wins over `CHROME_PORT` if set. |
+| `CHROME_PORT` | `9222` | Port for the auto-derived CDP URL and for autolaunched Chrome. |
+| `CHROME_BIN` | auto-detect | Path to the Chrome / Chromium binary. |
+| `CHROME_PROFILE_DIR` | (none) | `--user-data-dir` value. Required when `CHROME_AUTOLAUNCH=true`. |
+| `CHROME_AUTOLAUNCH` | `false` | If `true`, browser-mcp spawns Chrome on first connect attempt when the port is dead. Detached: Chrome survives browser-mcp restarts. |
+| `CHROME_EXTRA_ARGS` | (none) | Space-separated extra flags appended to the launch command. |
+
+**Per-agent isolation pattern.** Give each agent its own profile + port and set `CHROME_AUTOLAUNCH=true`. Cookies, logins, and DOM state stay separate.
+
+```json
+{
+  "mcpServers": {
+    "browser-mcp": {
+      "command": "node",
+      "args": ["/path/to/browser-mcp/dist/index.js"],
+      "env": {
+        "CHROME_PORT": "9223",
+        "CHROME_PROFILE_DIR": "/home/me/.assistant/prana/chrome-profile",
+        "CHROME_AUTOLAUNCH": "true"
+      }
+    }
+  }
+}
+```
+
+**Sharing a profile** (opt-in): point two agents at the same `CHROME_PROFILE_DIR` and the same `CHROME_PORT`. They'll share state.
+
+**Connecting to an existing Chrome you manage yourself** (legacy): set `CDP_URL` and leave `CHROME_AUTOLAUNCH` unset. Run Chrome separately:
+
+```bash
+google-chrome --remote-debugging-port=9222 \
+  --user-data-dir="$HOME/.chrome-mcp-profile" \
+  --no-first-run --no-default-browser-check
+```
 
 ## Installation
 

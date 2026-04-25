@@ -1,6 +1,50 @@
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync } from "node:fs";
 import { chromium, type Browser, type Page } from "playwright-core";
 
-const CDP_URL = "http://localhost:9222";
+// ── Configuration (read once at module load) ────────────────────────────
+//
+// Environment variables (all optional):
+//   CDP_URL              Full URL to an existing Chrome DevTools endpoint.
+//                        Wins over CHROME_PORT if set. Default derived from
+//                        CHROME_PORT.
+//   CHROME_PORT          Port for the CDP endpoint when constructing
+//                        CDP_URL automatically. Default 9222.
+//   CHROME_BIN           Chrome/Chromium binary to launch. Auto-detected
+//                        from common paths if unset.
+//   CHROME_PROFILE_DIR   --user-data-dir value. Required when CHROME_AUTOLAUNCH
+//                        is true. The directory is created if missing.
+//   CHROME_AUTOLAUNCH    "true"/"1" enables: when the CDP endpoint is dead
+//                        on connect, browser-mcp spawns Chrome itself with
+//                        the configured port + profile, detached, surviving
+//                        browser-mcp lifecycle. Default false.
+//   CHROME_EXTRA_ARGS    Space-separated extra flags appended to the launch.
+//                        Useful for headless, kiosk, etc.
+//
+const CHROME_PORT = parseInt(process.env.CHROME_PORT ?? "9222", 10);
+const CDP_URL = process.env.CDP_URL ?? `http://localhost:${CHROME_PORT}`;
+const CHROME_AUTOLAUNCH =
+  process.env.CHROME_AUTOLAUNCH === "true" || process.env.CHROME_AUTOLAUNCH === "1";
+const CHROME_PROFILE_DIR = process.env.CHROME_PROFILE_DIR;
+const CHROME_BIN = process.env.CHROME_BIN ?? findChromeBinary();
+const CHROME_EXTRA_ARGS = (process.env.CHROME_EXTRA_ARGS ?? "")
+  .split(/\s+/)
+  .filter(Boolean);
+
+function findChromeBinary(): string {
+  const candidates = [
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+  ];
+  for (const path of candidates) {
+    if (existsSync(path)) return path;
+  }
+  return "google-chrome"; // hope it's on PATH
+}
 
 export type RefInfo = { role: string; name?: string; nth?: number };
 export type RefMap = Record<string, RefInfo>;
@@ -22,12 +66,85 @@ async function getWebSocketUrl(): Promise<string> {
   return info.webSocketDebuggerUrl;
 }
 
+async function isCdpReachable(): Promise<boolean> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 1000);
+    const resp = await fetch(`${CDP_URL}/json/version`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Spawn Chrome with the configured profile + port, detached so it outlives
+ * browser-mcp. We don't track the child PID — Chrome owns its own lifecycle
+ * once spawned. Subsequent browser-mcp restarts simply reattach to the
+ * already-running browser via CDP.
+ */
+async function autolaunchChrome(): Promise<void> {
+  if (!CHROME_PROFILE_DIR) {
+    throw new Error(
+      "CHROME_AUTOLAUNCH is set but CHROME_PROFILE_DIR is not. " +
+        "Set CHROME_PROFILE_DIR to a writable directory.",
+    );
+  }
+  if (!existsSync(CHROME_PROFILE_DIR)) {
+    mkdirSync(CHROME_PROFILE_DIR, { recursive: true });
+  }
+  const args = [
+    `--remote-debugging-port=${CHROME_PORT}`,
+    `--user-data-dir=${CHROME_PROFILE_DIR}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-features=ChromeWhatsNewUI",
+    ...CHROME_EXTRA_ARGS,
+  ];
+
+  console.error(
+    `[browser-mcp] autolaunching Chrome on :${CHROME_PORT} with profile ${CHROME_PROFILE_DIR}`,
+  );
+
+  // setsid (Linux) / nohup-equivalent: detach from parent so Chrome
+  // survives browser-mcp restarts. On macOS, `setsid` exists via brew or
+  // the binary itself can be detached with stdio: 'ignore' + unref.
+  const child = spawn(CHROME_BIN, args, {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+
+  // Poll until the CDP endpoint is reachable, max ~10s.
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    if (await isCdpReachable()) return;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error(
+    `Chrome was launched but its CDP endpoint at ${CDP_URL} did not come up within 10s`,
+  );
+}
+
 export async function connect(): Promise<Browser> {
   if (browser?.isConnected()) return browser;
 
   if (connecting) return connecting;
 
   connecting = (async () => {
+    // Optional autolaunch: if Chrome isn't reachable and we're configured
+    // to manage it, spawn it before we try to connect.
+    if (CHROME_AUTOLAUNCH && !(await isCdpReachable())) {
+      try {
+        await autolaunchChrome();
+      } catch (err) {
+        console.error("[browser-mcp] autolaunch failed:", err);
+        // Fall through — connect attempt below will produce the user-facing
+        // error if we still can't reach CDP.
+      }
+    }
+
     let lastErr: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
