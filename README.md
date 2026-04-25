@@ -67,6 +67,24 @@ google-chrome --remote-debugging-port=9222 \
   --no-first-run --no-default-browser-check
 ```
 
+### Hiding the profile directory from your agent
+
+The `CHROME_PROFILE_DIR` lives inside your agent's working directory and Chrome dumps tens to hundreds of MB of cookies, caches, and IndexedDB content there. None of it is meaningful for the agent to read, and most of it pollutes file listings and search results. Add it to both ignore files:
+
+```bash
+echo "chrome-profile/" >> .claudeignore
+echo "chrome-profile/" >> .gitignore
+```
+
+Chrome can also accumulate **multi-gigabyte** subdirectories you don't want — most notably `OptGuideOnDeviceModel/` (the on-device Gemini Nano model, ~4 GB) and `Default/Cache/` (the HTTP cache, often 1+ GB). They re-download / rebuild on demand and are safe to delete:
+
+```bash
+rm -rf chrome-profile/OptGuideOnDeviceModel \
+       chrome-profile/optimization_guide_model_store \
+       chrome-profile/Default/Cache \
+       "chrome-profile/Default/Code Cache"
+```
+
 ## Installation
 
 ```bash
