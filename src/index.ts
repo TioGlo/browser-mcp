@@ -21,9 +21,29 @@ const SCREENSHOT_DIR = path.join(
   ".assistant/workspace/screenshots"
 );
 
+// Snapshot-economy guidance loaded into context for every browser-mcp
+// consumer. Instagram/Gmail/X snapshots routinely hit 5-20K tokens, so
+// steering callers toward `evaluate` and `screenshot` when appropriate
+// pays for this fixed overhead many times over.
+const INSTRUCTIONS = `browser-mcp usage guidance:
+
+Snapshot economy — these tools vary by ~100x in token cost. Pick wisely:
+
+- Prefer \`evaluate\` (run JS to query a specific element) when you know what you're looking for. Returns ~50-500 tokens vs \`snapshot\`'s 5-20K+. Use for "click this button," "read this text," "is this visible?"
+
+- Use \`screenshot\` for visual verification ("what does this page look like?"), not \`snapshot\`. Single multimodal payload, not paginated text.
+
+- \`snapshot\` only on first arrival to a page; operate on returned refs across subsequent clicks rather than re-snapshotting after every action. The refs stay valid until navigation.
+
+- Dense apps (Instagram, Gmail, X, LinkedIn) routinely produce 8K+ snapshots — that's the baseline, not the worst case. Profile pages, notification feeds, and DM threads are the worst offenders.
+
+When unsure, ask: "do I already know what I'm looking for?" If yes, \`evaluate\` or click on a known ref. If no, \`snapshot\` once, then operate on refs.`;
+
 const server = new McpServer({
   name: "browser-mcp",
   version: "1.0.0",
+}, {
+  instructions: INSTRUCTIONS,
 });
 
 // ── 1. navigate ─────────────────────────────────────────────────────────
