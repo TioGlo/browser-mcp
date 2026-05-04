@@ -203,14 +203,31 @@ export async function getActivePage(targetId?: string): Promise<Page> {
   const pages = await getAllPages(b);
   if (!pages.length) throw new Error("No pages available in the connected browser.");
 
-  if (!targetId) return pages[0]!;
-
-  for (const page of pages) {
-    const tid = await getTargetId(page);
-    if (tid === targetId) return page;
+  // CDP doesn't expose a "user's foreground tab" concept — Playwright's
+  // pages() returns tabs in arbitrary discovery order. Without bringToFront,
+  // operations land on whatever pages[0] happens to be while the user is
+  // watching a different tab in the same window. Bring the chosen page to
+  // the front so what the agent does is what the user sees.
+  let page: Page;
+  if (!targetId) {
+    page = pages[0]!;
+  } else {
+    let found: Page | undefined;
+    for (const p of pages) {
+      const tid = await getTargetId(p);
+      if (tid === targetId) { found = p; break; }
+    }
+    if (!found) {
+      throw new Error(`Tab not found: ${targetId}. Use list_tabs to see available tabs.`);
+    }
+    page = found;
   }
-
-  throw new Error(`Tab not found: ${targetId}. Use list_tabs to see available tabs.`);
+  try {
+    await page.bringToFront();
+  } catch {
+    // bringToFront can fail on detached or closed contexts; not fatal.
+  }
+  return page;
 }
 
 export async function listAllTabs(): Promise<
@@ -233,6 +250,8 @@ export async function newTab(url: string): Promise<Page> {
   if (!ctx) throw new Error("No browser context available.");
   const page = await ctx.newPage();
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+  // Make the new tab visible — see getActivePage for rationale.
+  try { await page.bringToFront(); } catch {}
   return page;
 }
 
