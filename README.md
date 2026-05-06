@@ -38,6 +38,7 @@ All optional. Set them in the `env` block of your `.mcp.json` entry.
 | `CHROME_PROFILE_DIR` | (none) | `--user-data-dir` value. Required when `CHROME_AUTOLAUNCH=true`. |
 | `CHROME_AUTOLAUNCH` | `false` | If `true`, browser-mcp spawns Chrome on first connect attempt when the port is dead. Detached: Chrome survives browser-mcp restarts. |
 | `CHROME_EXTRA_ARGS` | (none) | Space-separated extra flags appended to the launch command. |
+| `BROWSER_MCP_BRING_TO_FRONT` | `true` | When the agent operates on a tab, browser-mcp brings that tab to the foreground so you can see what's happening. Set `0`/`false` to skip this — useful when you want browser-mcp to act invisibly while you keep using the browser for unrelated tabs. |
 
 **Per-agent isolation pattern.** Give each agent its own profile + port and set `CHROME_AUTOLAUNCH=true`. Cookies, logins, and DOM state stay separate.
 

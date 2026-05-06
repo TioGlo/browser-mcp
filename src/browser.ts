@@ -20,6 +20,12 @@ import { chromium, type Browser, type Page } from "playwright-core";
 //                        browser-mcp lifecycle. Default false.
 //   CHROME_EXTRA_ARGS    Space-separated extra flags appended to the launch.
 //                        Useful for headless, kiosk, etc.
+//   BROWSER_MCP_BRING_TO_FRONT
+//                        "0"/"false" disables auto-foregrounding of the tab
+//                        every operation lands on. Default true (visible).
+//                        Set to 0 when you want browser-mcp to operate
+//                        invisibly in the background while you keep using
+//                        the browser for unrelated tabs.
 //
 const CHROME_PORT = parseInt(process.env.CHROME_PORT ?? "9222", 10);
 const CDP_URL = process.env.CDP_URL ?? `http://localhost:${CHROME_PORT}`;
@@ -30,6 +36,10 @@ const CHROME_BIN = process.env.CHROME_BIN ?? findChromeBinary();
 const CHROME_EXTRA_ARGS = (process.env.CHROME_EXTRA_ARGS ?? "")
   .split(/\s+/)
   .filter(Boolean);
+const BRING_TO_FRONT = !(
+  process.env.BROWSER_MCP_BRING_TO_FRONT === "0" ||
+  process.env.BROWSER_MCP_BRING_TO_FRONT === "false"
+);
 
 function findChromeBinary(): string {
   const candidates = [
@@ -222,10 +232,12 @@ export async function getActivePage(targetId?: string): Promise<Page> {
     }
     page = found;
   }
-  try {
-    await page.bringToFront();
-  } catch {
-    // bringToFront can fail on detached or closed contexts; not fatal.
+  if (BRING_TO_FRONT) {
+    try {
+      await page.bringToFront();
+    } catch {
+      // bringToFront can fail on detached or closed contexts; not fatal.
+    }
   }
   return page;
 }
@@ -251,7 +263,9 @@ export async function newTab(url: string): Promise<Page> {
   const page = await ctx.newPage();
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
   // Make the new tab visible — see getActivePage for rationale.
-  try { await page.bringToFront(); } catch {}
+  if (BRING_TO_FRONT) {
+    try { await page.bringToFront(); } catch {}
+  }
   return page;
 }
 
